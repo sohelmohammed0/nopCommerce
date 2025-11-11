@@ -38,7 +38,7 @@ jobs:
         with:
           args: >
             -Dsonar.organization=sohel879879
-            -Dsonar.projectKey=sohel879879_nopCommerce
+            -Dsonar.projectKey=sohel879879_nopCommerce.git
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
         env:
