@@ -36,7 +36,7 @@ jobs:
         with:
           args: >
             -Dsonar.organization=sohel879879
-            -Dsonar.projectKey=sohel879879_nopCommerce.git
+            -Dsonar.projectKey=sohel879879_nopCommerce
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
         env:
@@ -66,12 +66,21 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t ${{ steps.login-ecr.outputs.registry }}/dotnet:latest .
-          docker images
+          docker build -t nop-app:latest .
+
+      # ✅ Save and upload image as artifact for Trivy scan
+      - name: Save Docker image
+        run: docker save -o nop-app.tar nop-app:latest
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: nop-app.tar
 
 
   #----------------------------------------------------
-  # ✅ JOB-4 → TRIVY IMAGE SCAN (Save report)
+  # ✅ JOB-4 → TRIVY IMAGE SCAN (LOCAL IMAGE)
   #----------------------------------------------------
   trivy_scan:
     runs-on: ubuntu-latest
@@ -80,28 +89,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Download built image
+        uses: actions/download-artifact@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1
+          name: docker-image
+          path: .
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Pull image from ECR for scan
-        run: |
-          docker pull ${{ steps.login-ecr.outputs.registry }}/dotnet:latest
+      - name: Load Docker image
+        run: docker load -i nop-app.tar
 
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ steps.login-ecr.outputs.registry }}/dotnet:latest
+          image-ref: nop-app:latest
           format: table
           output: trivy-report.txt
-          exit-code: 0
+          exit-code: 0           # set to 1 to fail on critical vulns
           ignore-unfixed: true
 
       - name: Upload Trivy report
@@ -132,12 +135,23 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ✅ Download and load the same image for push
+      - name: Download built image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: .
+
+      - name: Load Docker image
+        run: docker load -i nop-app.tar
+
       - name: Push Docker image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: dotnet
+          ECR_REPOSITORY: dotnet             # ✅ your actual ECR repo name
           IMAGE_TAG: latest
         run: |
+          docker tag nop-app:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "✅ Image pushed to ECR: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
