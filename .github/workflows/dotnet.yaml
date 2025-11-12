@@ -6,19 +6,12 @@ on:
       - develop
 
 jobs:
-  #----------------------------------------------------
-  # ✅ JOB-1 → CHECKOUT
-  #----------------------------------------------------
   checkout:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-  #----------------------------------------------------
-  # ✅ JOB-2 → SCA (SonarCloud Code Analysis)
-  #----------------------------------------------------
   sca:
     runs-on: ubuntu-latest
     needs: checkout
@@ -42,10 +35,6 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-
-  #----------------------------------------------------
-  # ✅ JOB-3 → BUILD DOCKER IMAGE
-  #----------------------------------------------------
   docker_build:
     runs-on: ubuntu-latest
     needs: sca
@@ -68,7 +57,6 @@ jobs:
         run: |
           docker build -t nop-app:latest .
 
-      # ✅ Save and upload image as artifact for Trivy scan
       - name: Save Docker image
         run: docker save -o nop-app.tar nop-app:latest
 
@@ -78,10 +66,6 @@ jobs:
           name: docker-image
           path: nop-app.tar
 
-
-  #----------------------------------------------------
-  # ✅ JOB-4 → TRIVY IMAGE SCAN (LOCAL IMAGE)
-  #----------------------------------------------------
   trivy_scan:
     runs-on: ubuntu-latest
     needs: docker_build
@@ -104,7 +88,7 @@ jobs:
           image-ref: nop-app:latest
           format: table
           output: trivy-report.txt
-          exit-code: 0           # set to 1 to fail on critical vulns
+          exit-code: 0
           ignore-unfixed: true
 
       - name: Upload Trivy report
@@ -113,10 +97,6 @@ jobs:
           name: trivy-scan-report
           path: trivy-report.txt
 
-
-  #----------------------------------------------------
-  # ✅ JOB-5 → PUSH IMAGE TO ECR & DEPLOY TO EKS
-  #----------------------------------------------------
   deploy:
     runs-on: ubuntu-latest
     needs: trivy_scan
@@ -135,7 +115,6 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # ✅ Download and load the same image for push
       - name: Download built image
         uses: actions/download-artifact@v4
         with:
@@ -148,7 +127,7 @@ jobs:
       - name: Push Docker image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: dotnet             # ✅ your actual ECR repo name
+          ECR_REPOSITORY: dotnet
           IMAGE_TAG: latest
         run: |
           docker tag nop-app:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
@@ -166,6 +145,33 @@ jobs:
           ECR_REPOSITORY: dotnet
           IMAGE_TAG: latest
         run: |
-          kubectl set image deployment/nop-deployment nop-container=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG --record
+          # Check if deployment exists
+          if kubectl get deployment nop-deployment > /dev/null 2>&1; then
+            echo "🔄 Updating existing deployment image..."
+            kubectl set image deployment/nop-deployment nop-container=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          else
+            echo "🚀 Creating new deployment..."
+            cat <<EOF | kubectl apply -f -
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: nop-deployment
+            spec:
+              replicas: 2
+              selector:
+                matchLabels:
+                  app: nop
+              template:
+                metadata:
+                  labels:
+                    app: nop
+                spec:
+                  containers:
+                  - name: nop-container
+                    image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+                    ports:
+                    - containerPort: 5000
+            EOF
+          fi
           kubectl rollout status deployment/nop-deployment
           kubectl get pods -o wide
