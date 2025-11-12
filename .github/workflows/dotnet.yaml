@@ -65,12 +65,11 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Docker image
-        run: |
-          docker build -t nop-app:latest .
+        run: docker build -t nop-app:latest .
 
 
   #----------------------------------------------------
-  # ✅ JOB-4 → TRIVY IMAGE SCAN (Save report)
+  # ✅ JOB-4 → TRIVY IMAGE SCAN (Save Report)
   #----------------------------------------------------
   trivy_scan:
     runs-on: ubuntu-latest
@@ -79,21 +78,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker for Trivy
-        run: |
-          docker images
-          echo "Checking built images before scan..."
+      - name: List Docker images before scanning
+        run: docker images
 
-      - name: Run Trivy image scan
+      - name: Run Trivy scan on image
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: nop-app:latest
           format: table
           output: trivy-report.txt
-          exit-code: 0           # change to 1 to fail on high vulns
+          exit-code: 0
           ignore-unfixed: true
 
-      - name: Upload Trivy report
+      - name: Upload Trivy scan report
         uses: actions/upload-artifact@v4
         with:
           name: trivy-scan-report
@@ -124,19 +121,19 @@ jobs:
       - name: Push Docker image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: dotnet            # ✅ your ECR repo name
+          ECR_REPOSITORY: dotnet      # change if your repo name differs
           IMAGE_TAG: latest
         run: |
           docker tag nop-app:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "✅ Image pushed to ECR: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-      - name: Configure kubeconfig for EKS
+      - name: Configure kubectl for EKS
         run: |
           aws eks update-kubeconfig --region ap-south-1 --name ${{ secrets.EKS_CLUSTER_NAME }}
           kubectl get nodes
 
-      - name: Deploy to EKS
+      - name: Deploy new image to EKS
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: dotnet
