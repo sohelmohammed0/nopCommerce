@@ -147,10 +147,12 @@ jobs:
           ECR_REPOSITORY: dotnet
           IMAGE_TAG: latest
         run: |
-          # Apply deployment manifest if it exists, else create
-          if kubectl get deployment nop-deployment > /dev/null 2>&1; then
+          if kubectl get deployment nop-deployment >/dev/null 2>&1; then
             echo "🔄 Updating existing deployment image..."
             kubectl set image deployment/nop-deployment nop-container=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           else
             echo "🚀 Creating new deployment..."
-            
+            kubectl apply -f k8s/deployment.yaml
+          fi
+
+          echo "✅ Deployment step completed successfully."
