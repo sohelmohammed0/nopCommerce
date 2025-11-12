@@ -4,6 +4,9 @@ metadata:
   name: nop-service
   labels:
     app: nop
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb" # or "classic" if you prefer
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
 spec:
   selector:
     app: nop

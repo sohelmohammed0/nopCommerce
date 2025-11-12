@@ -55,7 +55,9 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t nop-app:latest .
+          IMAGE_TAG=$(date +%Y%m%d%H%M%S)
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          docker build -t nop-app:$IMAGE_TAG -t nop-app:latest .
 
       - name: Save Docker image
         run: docker save -o nop-app.tar nop-app:latest
@@ -147,12 +149,14 @@ jobs:
           ECR_REPOSITORY: dotnet
           IMAGE_TAG: latest
         run: |
-          if kubectl get deployment nop-deployment >/dev/null 2>&1; then
-            echo "🔄 Updating existing deployment image..."
-            kubectl set image deployment/nop-deployment nop-container=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          else
-            echo "🚀 Creating new deployment..."
-            kubectl apply -f k8s/deployment.yaml
-          fi
+          echo "🚀 Starting EKS deployment..."
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+
+          echo "🔁 Verifying rollout status..."
+          kubectl rollout status deployment/nop-deployment --timeout=120s || true
+
+          echo "🌐 Fetching LoadBalancer URL..."
+          kubectl get svc nop-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
 
           echo "✅ Deployment step completed successfully."
