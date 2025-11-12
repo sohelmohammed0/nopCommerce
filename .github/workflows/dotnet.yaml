@@ -1,88 +1,84 @@
-name: CI/CD Pipeline
+name: mydotnet project
 
-on:
+on: 
   push:
     branches:
       - develop
 
 env:
   AWS_REGION: ap-south-1
-  ECR_REPOSITORY: dotnet
+  ECR_REGISTRY: 934545598565.dkr.ecr.ap-south-1.amazonaws.com
+  ECR_REPOSITORY: mydummypodlevel
   IMAGE_TAG: latest
 
 jobs:
-  build:
+  dotnet_publish:
     runs-on: ubuntu-latest
 
     steps:
       # 1️⃣ Checkout code
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      # 2️⃣ Set up .NET
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '9.0.x'
-
-      # 3️⃣ Build Docker image
-      - name: Build Docker image
-        run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
-
-      # 4️⃣ Run Trivy scan
-      - name: Scan Docker image with Trivy
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          scan-type: image
-          image-ref: $ECR_REPOSITORY:$IMAGE_TAG
-          format: table
-          exit-code: 0
-          vuln-type: os,library
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: true
-          output: trivy-report.txt
-
-      # 5️⃣ Login to AWS ECR
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      # 6️⃣ Tag & push Docker image to ECR
-      - name: Push Docker image to ECR
-        run: |
-          docker tag $ECR_REPOSITORY:$IMAGE_TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      # 2️⃣ Setup AWS credentials
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to EKS
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: dotnet
-          IMAGE_TAG: latest
+      # 3️⃣ Restore .NET dependencies
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.111'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+
+      # 6️⃣ Build Docker image
+      - name: Build Docker image
         run: |
-          echo "🔧 Updating kubeconfig..."
-          aws eks update-kubeconfig --region $AWS_REGION --name ${{ secrets.EKS_CLUSTER_NAME }}
+          docker build -t dotnetapp:${{ env.IMAGE_TAG }} .
 
-          echo "🧾 Updating image in Kubernetes manifests..."
-          sed -i "s|image:.*|image: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" k8s/deployment.yaml
+      # 7️⃣ Scan Docker image with Trivy
+      - name: Scan Docker image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: image
+          image-ref: dotnetapp:${{ env.IMAGE_TAG }}
+          format: table
+          exit-code: 0
+          vuln-type: os,library
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: true
+          output: trivy-image-report.txt
 
-          echo "🚀 Applying manifests to EKS..."
-          kubectl apply -f k8s/
+      # 8️⃣ Save Docker scan report
+      - name: Save Docker scan report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: trivy-image-report.txt
 
-          echo "✅ Checking deployment status..."
+      # 9️⃣ Login to ECR
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 🔟 Tag & Push Docker image to ECR
+      - name: Tag and push Docker image
+        run: |
+          docker tag dotnetapp:${{ env.IMAGE_TAG }} ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+
+      # 1️⃣1️⃣ Deploy to EKS
+      - name: Deploy to EKS
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" > kubeconfig.yaml
+          export KUBECONFIG=kubeconfig.yaml
+          kubectl apply -f k8s/       # apply manifest files in k8s folder
+          kubectl set image deployment/nop-deployment nop-container=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           kubectl rollout status deployment/nop-deployment
-          kubectl get pods -o wide
+          kubectl get po
